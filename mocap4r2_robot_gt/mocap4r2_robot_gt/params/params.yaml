@@ -1,0 +1,11 @@
+mocap4r2_gt:
+  ros__parameters:
+    root_frame: 'odom'
+    robot_frame: 'base_link'
+    mocap_frame: 'base_link_gt'
+    rigid_body_topic: '/rigid_bodies'
+    odometry_topic: '/odometry'
+    init_mocap4r2_xyzrpy: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    covariance:
+      pose: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+      twist: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]

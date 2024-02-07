@@ -31,7 +31,7 @@ def generate_launch_description():
 
     declare_mocap4r2_system = DeclareLaunchArgument(
         'mocap4r2_system',
-        default_value='optitrack',
+        default_value='vicon',
         description='')
 
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
@@ -62,7 +62,9 @@ def generate_launch_description():
         executable='mocap4r2_marker_viz',
         output='both',
         emulate_tty=True,
-        parameters=[{'mocap4r2_system': mocap4r2_system}],
+        parameters=[{
+            'marker_frame': 'odom',
+            'mocap4r2_system': mocap4r2_system}],
     )
 
     # Create the launch description and populate
