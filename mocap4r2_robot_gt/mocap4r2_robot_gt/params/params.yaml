@@ -4,7 +4,7 @@ mocap4r2_gt:
     robot_frame: 'base_link'
     mocap_frame: 'base_link_gt'
     rigid_body_topic: '/rigid_bodies'
-    odometry_topic: '/odometry'
+    odometry_topic: '/vicon/odom'
     init_mocap4r2_xyzrpy: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     covariance:
       pose: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
