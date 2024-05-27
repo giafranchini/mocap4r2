@@ -18,6 +18,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 
 #include <vector>
 
@@ -39,19 +40,29 @@ GTNode::GTNode(const rclcpp::NodeOptions & options)
 {
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
 
-  rigid_body_sub_ = create_subscription<mocap4r2_msgs::msg::RigidBodies>(
-    "rigid_bodies", rclcpp::SensorDataQoS(), std::bind(&GTNode::rigid_bodies_callback, this, _1));
-  set_gt_origin_srv_ = create_service<mocap4r2_robot_gt_msgs::srv::SetGTOrigin>(
-    "~/set_get_origin", std::bind(&GTNode::set_gt_origin_callback, this, _1, _2));
-
   declare_parameter<std::string>("root_frame", "odom");
   declare_parameter<std::string>("robot_frame", "base_footprint");
   declare_parameter<std::string>("mocap_frame", "base_mocap");
+  declare_parameter<std::string>("rigid_body_topic_", "rigid_bodies");
+  declare_parameter<std::string>("odometry_topic", "odometry");
   declare_parameter<std::vector<double>>("init_mocap4r2_xyzrpy", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
-
+  declare_parameter<std::vector<double>>("covariance.pose", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  declare_parameter<std::vector<double>>("covariance.twist", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  
   get_parameter("root_frame", root_frame_);
   get_parameter("robot_frame", robot_frame_);
   get_parameter("mocap_frame", mocap_frame_);
+  get_parameter("rigid_body_topic_", rigid_body_topic_);
+  get_parameter("odometry_topic", odometry_topic_);
+  get_parameter("covariance.pose", pose_covariance_);
+  get_parameter("covariance.twist", twist_covariance_);
+
+  rigid_body_sub_ = create_subscription<mocap4r2_msgs::msg::RigidBodies>(
+    rigid_body_topic_, rclcpp::SensorDataQoS(), std::bind(&GTNode::rigid_bodies_callback, this, _1));
+  set_gt_origin_srv_ = create_service<mocap4r2_robot_gt_msgs::srv::SetGTOrigin>(
+    "~/set_get_origin", std::bind(&GTNode::set_gt_origin_callback, this, _1, _2));
+
+  odometry_pub_ = create_publisher<nav_msgs::msg::Odometry>(odometry_topic_, 10);
 
   std::vector<double> init_mocap4r2_coordinates;
   get_parameter("init_mocap4r2_xyzrpy", init_mocap4r2_coordinates);
@@ -92,12 +103,19 @@ GTNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr m
     tf2::Transform root2robotgt;
     root2robotgt = offset_ * mocap2gtbody_ * gtbody2robot_;
 
+    auto odom_msg = std::make_unique<nav_msgs::msg::Odometry>();
+    odom_msg->header.frame_id = root_frame_;
+    odom_msg->header.stamp = msg->header.stamp;
+    odom_msg->child_frame_id = robot_frame_ + "_gt";
+    GTNode::compute_odometry(root2robotgt, odom_msg);
+
     geometry_msgs::msg::TransformStamped root2robotgt_msg;
     root2robotgt_msg.header.frame_id = root_frame_;
     root2robotgt_msg.header.stamp = msg->header.stamp;
     root2robotgt_msg.child_frame_id = robot_frame_ + "_gt";
     root2robotgt_msg.transform = tf2::toMsg(root2robotgt);
 
+    odometry_pub_->publish(std::move(odom_msg));
     tf_broadcaster_->sendTransform(root2robotgt_msg);
   }
 }
@@ -160,6 +178,59 @@ GTNode::get_pose_from_vector(const std::vector<double> & init_pos)
     RCLCPP_WARN(get_logger(), "Trying to get Pose for a wrong vector");
     return ret;
   }
+}
+
+void GTNode::compute_odometry(
+  const tf2::Transform & root2robot_tf,
+  nav_msgs::msg::Odometry::UniquePtr & odom_msg)
+{
+  tf2::Transform p1;
+  tf2::fromMsg(prev_pose_.pose, p1);
+  tf2::toMsg(root2robot_tf, odom_msg->pose.pose);
+
+  const double q1_w = p1.getRotation().w();
+  const double q1_x = p1.getRotation().x();
+  const double q1_y = p1.getRotation().y();
+  const double q1_z = p1.getRotation().z();
+
+  const double q2_w = root2robot_tf.getRotation().w();
+  const double q2_x = root2robot_tf.getRotation().x();
+  const double q2_y = root2robot_tf.getRotation().y();
+  const double q2_z = root2robot_tf.getRotation().z(); 
+  
+  rclcpp::Time t1 = prev_pose_.header.stamp;
+  rclcpp::Time t2 = odom_msg->header.stamp;
+
+  const double dt_inv = 1.0 / (t2 - t1).seconds();
+
+  auto delta_trans = tf2::quatRotate(
+    root2robot_tf.getRotation().inverse(), (root2robot_tf.getOrigin() - p1.getOrigin()));
+    
+  // Compute linear velocities
+  odom_msg->twist.twist.linear.x = delta_trans.x() * dt_inv;
+  odom_msg->twist.twist.linear.y = delta_trans.y() * dt_inv;
+  odom_msg->twist.twist.linear.z = delta_trans.z() * dt_inv;
+    
+  // Compute angular velocities
+  odom_msg->twist.twist.angular.x = 
+    2.0 * dt_inv * (q1_w * q2_x - q1_x * q2_w - q1_y * q2_z + q1_z * q2_y);
+  odom_msg->twist.twist.angular.y = 
+    2.0 * dt_inv * (q1_w * q2_y + q1_x * q2_z - q1_y * q2_w - q1_z * q2_x);
+  odom_msg->twist.twist.angular.z = 
+    2.0 * dt_inv * (q1_w * q2_z - q1_x * q2_y + q1_y * q2_x - q1_z * q2_w);
+
+  // Fill covariances
+  for (size_t i = 0; i < 6; i++) 
+  {
+    odom_msg->pose.covariance[i * 6 + i] = pose_covariance_[i];
+    odom_msg->twist.covariance[i * 6 + i] = twist_covariance_[i];
+  }
+
+  prev_pose_.header = odom_msg->header;
+  prev_pose_.pose.position.x = odom_msg->pose.pose.position.x;
+  prev_pose_.pose.position.y = odom_msg->pose.pose.position.y;
+  prev_pose_.pose.position.z = odom_msg->pose.pose.position.z;
+  prev_pose_.pose.orientation = odom_msg->pose.pose.orientation;
 }
 
 }  // namespace mocap4r2_robot_gt
