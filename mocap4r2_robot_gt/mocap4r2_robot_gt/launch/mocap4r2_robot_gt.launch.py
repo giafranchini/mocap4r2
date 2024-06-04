@@ -21,7 +21,7 @@ def generate_launch_description():
     executable='static_transform_publisher',
     name='gtbody2robot_tf',
     output='screen',
-    arguments=["--x", "0", "--y", "0", "--z", "0", "--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1", "--frame-id", "base_link", "--child-frame-id", "base_link_gt"]
+    arguments=["--x", "0", "--y", "0", "--z", "0.10", "--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1", "--frame-id", "base_link", "--child-frame-id", "base_mocap"]
   )
 
   mocap4r2_robot_gt = Node(

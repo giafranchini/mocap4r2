@@ -64,6 +64,7 @@ protected:
   std::string mocap_frame_;
 
   std::string rigid_body_topic_;
+  std::string rigid_body_name_;
   std::string odometry_topic_;
 
   tf2::Transform offset_;
@@ -71,6 +72,7 @@ protected:
   tf2::Transform mocap2gtbody_;
   
   geometry_msgs::msg::PoseStamped prev_pose_;
+  double alpha_;
 
   bool valid_gtbody2robot_{false};
 

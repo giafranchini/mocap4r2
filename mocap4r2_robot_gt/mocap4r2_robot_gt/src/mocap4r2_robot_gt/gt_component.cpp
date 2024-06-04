@@ -45,6 +45,8 @@ GTNode::GTNode(const rclcpp::NodeOptions & options)
   declare_parameter<std::string>("mocap_frame", "base_mocap");
   declare_parameter<std::string>("rigid_body_topic_", "rigid_bodies");
   declare_parameter<std::string>("odometry_topic", "odometry");
+  declare_parameter<std::string>("rigid_body_name", "robot");
+  declare_parameter<double>("alpha", 0.1);
   declare_parameter<std::vector<double>>("init_mocap4r2_xyzrpy", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
   declare_parameter<std::vector<double>>("covariance.pose", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
   declare_parameter<std::vector<double>>("covariance.twist", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
@@ -53,6 +55,8 @@ GTNode::GTNode(const rclcpp::NodeOptions & options)
   get_parameter("robot_frame", robot_frame_);
   get_parameter("mocap_frame", mocap_frame_);
   get_parameter("rigid_body_topic_", rigid_body_topic_);
+  get_parameter("rigid_body_name", rigid_body_name_);
+  get_parameter("alpha", alpha_);
   get_parameter("odometry_topic", odometry_topic_);
   get_parameter("covariance.pose", pose_covariance_);
   get_parameter("covariance.twist", twist_covariance_);
@@ -90,15 +94,27 @@ GTNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr m
         mocap_frame_.c_str(), robot_frame_.c_str(), e.what());
     }
   } else {
-    mocap2gtbody_.setOrigin(
-      tf2::Vector3(
-        msg->rigidbodies[0].pose.position.x, msg->rigidbodies[0].pose.position.y,
-        msg->rigidbodies[0].pose.position.z));
-    mocap2gtbody_.setRotation(
-      tf2::Quaternion(
-        msg->rigidbodies[0].pose.orientation.x, msg->rigidbodies[0].pose.orientation.y,
-        msg->rigidbodies[0].pose.orientation.z,
-        msg->rigidbodies[0].pose.orientation.w));
+    // find index for which the rigid body name is the same as the one we are looking for
+    auto robot_it = std::find_if(
+      msg->rigidbodies.begin(), msg->rigidbodies.end(),
+      [this](const mocap4r2_msgs::msg::RigidBody & rb) {
+        return rb.rigid_body_name == rigid_body_name_;
+      });
+
+    if (robot_it == msg->rigidbodies.end()) {
+      RCLCPP_WARN(get_logger(), "Rigid body %s not found in mocap system", rigid_body_name_.c_str());
+      return;
+    }
+
+    // Check if the mocap is publishing the robot pose and is not zero
+    tf2::Quaternion q;
+    tf2::fromMsg(robot_it->pose.orientation, q);
+    if (q.length2() < 1e-6) {
+      RCLCPP_WARN(get_logger(), "Zero quaternion received from mocap system. Check that the robot is being tracked");
+      return;
+    }
+    mocap2gtbody_.setOrigin(tf2::Vector3(robot_it->pose.position.x, robot_it->pose.position.y, robot_it->pose.position.z));
+    mocap2gtbody_.setRotation(q);
 
     tf2::Transform root2robotgt;
     root2robotgt = offset_ * mocap2gtbody_ * gtbody2robot_;
@@ -184,6 +200,7 @@ void GTNode::compute_odometry(
   const tf2::Transform & root2robot_tf,
   nav_msgs::msg::Odometry::UniquePtr & odom_msg)
 {
+  static geometry_msgs::msg::Twist smoothed_twist;
   tf2::Transform p1;
   tf2::fromMsg(prev_pose_.pose, p1);
   tf2::toMsg(root2robot_tf, odom_msg->pose.pose);
@@ -207,17 +224,28 @@ void GTNode::compute_odometry(
     root2robot_tf.getRotation().inverse(), (root2robot_tf.getOrigin() - p1.getOrigin()));
     
   // Compute linear velocities
-  odom_msg->twist.twist.linear.x = delta_trans.x() * dt_inv;
-  odom_msg->twist.twist.linear.y = delta_trans.y() * dt_inv;
-  odom_msg->twist.twist.linear.z = delta_trans.z() * dt_inv;
+  
+  // Smooth velocities with a simple low-pass filter
+  smoothed_twist.linear.x = (1 - alpha_) * smoothed_twist.linear.x + alpha_ * (delta_trans.x() * dt_inv);
+  smoothed_twist.linear.y = (1 - alpha_) * smoothed_twist.linear.y + alpha_ * (delta_trans.y() * dt_inv);
+  smoothed_twist.linear.z = (1 - alpha_) * smoothed_twist.linear.z + alpha_ * (delta_trans.z() * dt_inv);
+
+  odom_msg->twist.twist.linear.x = smoothed_twist.linear.x;
+  odom_msg->twist.twist.linear.y = smoothed_twist.linear.y;
+  odom_msg->twist.twist.linear.z = smoothed_twist.linear.z;
     
   // Compute angular velocities
-  odom_msg->twist.twist.angular.x = 
-    2.0 * dt_inv * (q1_w * q2_x - q1_x * q2_w - q1_y * q2_z + q1_z * q2_y);
-  odom_msg->twist.twist.angular.y = 
-    2.0 * dt_inv * (q1_w * q2_y + q1_x * q2_z - q1_y * q2_w - q1_z * q2_x);
-  odom_msg->twist.twist.angular.z = 
-    2.0 * dt_inv * (q1_w * q2_z - q1_x * q2_y + q1_y * q2_x - q1_z * q2_w);
+  // smooth angular velocities with a simple low-pass filter
+  smoothed_twist.angular.x = (1 - alpha_) * smoothed_twist.angular.x + alpha_ * (
+    2.0 * dt_inv * (q1_w * q2_x - q1_x * q2_w - q1_y * q2_z + q1_z * q2_y));
+  smoothed_twist.angular.y = (1 - alpha_) * smoothed_twist.angular.y + alpha_ * (
+    2.0 * dt_inv * (q1_w * q2_y + q1_x * q2_z - q1_y * q2_w - q1_z * q2_x));
+  smoothed_twist.angular.z = (1 - alpha_) * smoothed_twist.angular.z + alpha_ * (
+    2.0 * dt_inv * (q1_w * q2_z - q1_x * q2_y + q1_y * q2_x - q1_z * q2_w));
+
+  odom_msg->twist.twist.angular.x = smoothed_twist.angular.x;
+  odom_msg->twist.twist.angular.y = smoothed_twist.angular.y;
+  odom_msg->twist.twist.angular.z = smoothed_twist.angular.z;
 
   // Fill covariances
   for (size_t i = 0; i < 6; i++) 
