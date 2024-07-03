@@ -18,7 +18,7 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <nav_msgs/msg/odometry.hpp>
+#include <tf2/utils.h>
 
 #include <vector>
 #include <ranges>
@@ -51,9 +51,10 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
   declare_parameter<std::vector<double>>("covariance.twist", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
   
   get_parameter("root_frame", root_frame_);
+  get_parameter("map_frame", map_frame_);
   get_parameter("people_frame_prefix", people_frame_prefix_);
   get_parameter("rigid_body_topic", rigid_body_topic_);
-  get_parameter("rigid_body_name", rigid_body_name_);
+  get_parameter("rigid_body_prefix", rigid_body_prefix_);
   get_parameter("people_topic", people_topic_);
   get_parameter("covariance.pose", pose_covariance_);
   get_parameter("covariance.twist", twist_covariance_);
@@ -63,10 +64,8 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
     rigid_body_topic_, rclcpp::SensorDataQoS(), std::bind(&PeopleNode::rigid_bodies_callback, this, _1));
   
   people_pub_ = create_publisher<people_msgs::msg::People>(people_topic_, 10);
-  
+  pose_array_pub_ = create_publisher<geometry_msgs::msg::PoseArray>("pose_array", 10);
   valid_map2root_ = map_frame_ == root_frame_; 
-
-
 }
 
 void
@@ -95,13 +94,13 @@ PeopleNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedP
     }
     
     auto people_msg = std::make_unique<people_msgs::msg::People>();
-    
+    auto pose_array_msg = std::make_unique<geometry_msgs::msg::PoseArray>();
     
     for(const auto & person : people) {
       // Check if the mocap is publishing the person pose and is not zero
       tf2::Quaternion q;
       tf2::fromMsg(person.pose.orientation, q);
-      if (q < 1e-6) {
+      if (q.length2() < 1e-6) {
         RCLCPP_WARN(get_logger(), "Zero quaternion received from mocap system. Check that the person is being tracked");
         continue;
       }
@@ -113,134 +112,115 @@ PeopleNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedP
       // obtain the map2person transform
       tf2::Transform map2person = map2root_ * root2person;
 
-      auto person_pose = std::make_unique<geometry_msgs::msg::PoseStamped>();
-      person_pose->header = msg->header;
-      person_pose->header.frame_id = map_frame_;
-      person_pose->child_frame_id = person.rigid_body_name;
-      tf2::toMsg(map2person, person_pose->pose);
+      //consider markers instead of pose_array
+      auto person_pose = std::make_unique<geometry_msgs::msg::Pose>();
+      tf2::toMsg(map2person, *person_pose);
       geometry_msgs::msg::TransformStamped person_pose_msg;
-      person_pose_msg.header = person_pose->header;
+      person_pose_msg.header = msg->header;
+      person_pose_msg.header.frame_id = map_frame_;
+      person_pose_msg.child_frame_id = person.rigid_body_name;
       person_pose_msg.transform = tf2::toMsg(map2person);
 
+      tf_broadcaster_->sendTransform(person_pose_msg);
 
+      auto person_msg = std::make_unique<people_msgs::msg::Person>();
+      fill_person_msg(person.rigid_body_name, *person_pose, msg->header, person_msg);
 
-
+      pose_array_msg->poses.push_back(std::move(*person_pose));
+      people_msg->people.push_back(std::move(*person_msg));
     }
+    pose_array_msg->header = msg->header;
+    pose_array_msg->header.frame_id = map_frame_;
+    people_msg->header = msg->header;
+    people_msg->header.frame_id = map_frame_;
 
-    mocap2gtbody_.setOrigin(tf2::Vector3(robot_it->pose.position.x, robot_it->pose.position.y, robot_it->pose.position.z));
-    mocap2gtbody_.setRotation(q);
-
-    tf2::Transform root2robotgt;
-    root2robotgt = offset_ * mocap2gtbody_ * gtbody2robot_;
-
-    auto odom_msg = std::make_unique<nav_msgs::msg::Odometry>();
-    odom_msg->header.frame_id = root_frame_;
-    odom_msg->header.stamp = msg->header.stamp;
-    odom_msg->child_frame_id = robot_frame_ + "_gt";
-    PeopleNode::compute_odometry(root2robotgt, odom_msg);
-
-    geometry_msgs::msg::TransformStamped root2robotgt_msg;
-    root2robotgt_msg.header.frame_id = root_frame_;
-    root2robotgt_msg.header.stamp = msg->header.stamp;
-    root2robotgt_msg.child_frame_id = robot_frame_ + "_gt";
-    root2robotgt_msg.transform = tf2::toMsg(root2robotgt);
-
-    odometry_pub_->publish(std::move(odom_msg));
-    tf_broadcaster_->sendTransform(root2robotgt_msg);
+    people_pub_->publish(std::move(people_msg));
+    pose_array_pub_->publish(std::move(pose_array_msg));
   }
 }
 
-
-geometry_msgs::msg::Pose
-PeopleNode::get_pose_from_vector(const std::vector<double> & init_pos)
+void PeopleNode::fill_person_msg(
+  const std::string & person_name,
+  const geometry_msgs::msg::Pose & pose,
+  const std_msgs::msg::Header & header,
+  people_msgs::msg::Person::UniquePtr & person_msg)
 {
-  geometry_msgs::msg::Pose ret;
+  person_msg->name = person_name;
+  person_msg->reliability = 1.0;
 
-  if (init_pos.size() == 6u) {
-    tf2::Quaternion q;
-    q.setEuler(init_pos[3], init_pos[4], init_pos[5]);
+  // fill the pose of the person: x, y, yaw
+  person_msg->position.x = pose.position.x;
+  person_msg->position.y = pose.position.y;
+  // get the yaw from the quaternion
+  tf2::Quaternion q;
+  tf2::fromMsg(pose.orientation, q);
+  person_msg->position.z = tf2::getYaw(q);
 
-    ret.position.x = init_pos[0];
-    ret.position.y = init_pos[1];
-    ret.position.z = init_pos[2];
-    ret.orientation.x = q.x();
-    ret.orientation.y = q.y();
-    ret.orientation.z = q.z();
-    ret.orientation.w = q.w();
-
-    return ret;
-  } else {
-    RCLCPP_WARN(get_logger(), "Trying to get Pose for a wrong vector");
-    return ret;
-  }
+  // fill the velocity: vx, vy, vtheta
+  compute_velocity(pose, header, person_msg);
 }
 
-void PeopleNode::compute_odometry(
-  const tf2::Transform & root2robot_tf,
-  nav_msgs::msg::Odometry::UniquePtr & odom_msg)
+void PeopleNode::compute_velocity(
+  const geometry_msgs::msg::Pose & person_pose,
+  const std_msgs::msg::Header & header,
+  people_msgs::msg::Person::UniquePtr & person_msg)
 {
   static geometry_msgs::msg::Twist smoothed_twist;
-  tf2::Transform p1;
-  tf2::fromMsg(prev_pose_.pose, p1);
-  tf2::toMsg(root2robot_tf, odom_msg->pose.pose);
+  tf2::Transform p1, p2;
+  // try to get the previous pose of the person from the map of poses
+  // if it is not found, return
+  try {
+    tf2::fromMsg(prev_poses_[person_msg->name].pose, p1);
+    // update the previous pose of the person
+    prev_poses_[person_msg->name].pose = person_pose;
+    prev_poses_[person_msg->name].header = header;
+  } catch (const std::out_of_range & e) {
+    RCLCPP_WARN(get_logger(), "No previous pose found for person %s", person_msg->name.c_str());
+    // add the person to the map of poses
+    prev_poses_[person_msg->name].pose = person_pose;
+    prev_poses_[person_msg->name].header = header;
+    return;
+  }
+
+  tf2::fromMsg(person_pose, p2);
 
   const double q1_w = p1.getRotation().w();
   const double q1_x = p1.getRotation().x();
   const double q1_y = p1.getRotation().y();
   const double q1_z = p1.getRotation().z();
 
-  const double q2_w = root2robot_tf.getRotation().w();
-  const double q2_x = root2robot_tf.getRotation().x();
-  const double q2_y = root2robot_tf.getRotation().y();
-  const double q2_z = root2robot_tf.getRotation().z(); 
+  const double q2_w = p2.getRotation().w();
+  const double q2_x = p2.getRotation().x();
+  const double q2_y = p2.getRotation().y();
+  const double q2_z = p2.getRotation().z(); 
   
-  rclcpp::Time t1 = prev_pose_.header.stamp;
-  rclcpp::Time t2 = odom_msg->header.stamp;
+  rclcpp::Time t1 = prev_poses_[person_msg->name].header.stamp;
+  rclcpp::Time t2 = header.stamp;
 
   const double dt_inv = 1.0 / (t2 - t1).seconds();
 
   auto delta_trans = tf2::quatRotate(
-    root2robot_tf.getRotation().inverse(), (root2robot_tf.getOrigin() - p1.getOrigin()));
+    p2.getRotation().inverse(), (p2.getOrigin() - p1.getOrigin()));
     
   // Compute linear velocities
   
   // Smooth velocities with a simple low-pass filter
   smoothed_twist.linear.x = (1 - alpha_) * smoothed_twist.linear.x + alpha_ * (delta_trans.x() * dt_inv);
   smoothed_twist.linear.y = (1 - alpha_) * smoothed_twist.linear.y + alpha_ * (delta_trans.y() * dt_inv);
-  smoothed_twist.linear.z = (1 - alpha_) * smoothed_twist.linear.z + alpha_ * (delta_trans.z() * dt_inv);
+  
+  person_msg->velocity.x = smoothed_twist.linear.x;
+  person_msg->velocity.y = smoothed_twist.linear.y;
 
-  odom_msg->twist.twist.linear.x = smoothed_twist.linear.x;
-  odom_msg->twist.twist.linear.y = smoothed_twist.linear.y;
-  odom_msg->twist.twist.linear.z = smoothed_twist.linear.z;
-    
+
   // Compute angular velocities
   // smooth angular velocities with a simple low-pass filter
-  smoothed_twist.angular.x = (1 - alpha_) * smoothed_twist.angular.x + alpha_ * (
-    2.0 * dt_inv * (q1_w * q2_x - q1_x * q2_w - q1_y * q2_z + q1_z * q2_y));
-  smoothed_twist.angular.y = (1 - alpha_) * smoothed_twist.angular.y + alpha_ * (
-    2.0 * dt_inv * (q1_w * q2_y + q1_x * q2_z - q1_y * q2_w - q1_z * q2_x));
   smoothed_twist.angular.z = (1 - alpha_) * smoothed_twist.angular.z + alpha_ * (
     2.0 * dt_inv * (q1_w * q2_z - q1_x * q2_y + q1_y * q2_x - q1_z * q2_w));
 
-  odom_msg->twist.twist.angular.x = smoothed_twist.angular.x;
-  odom_msg->twist.twist.angular.y = smoothed_twist.angular.y;
-  odom_msg->twist.twist.angular.z = smoothed_twist.angular.z;
-
-  // Fill covariances
-  for (size_t i = 0; i < 6; i++) 
-  {
-    odom_msg->pose.covariance[i * 6 + i] = pose_covariance_[i];
-    odom_msg->twist.covariance[i * 6 + i] = twist_covariance_[i];
-  }
-
-  prev_pose_.header = odom_msg->header;
-  prev_pose_.pose.position.x = odom_msg->pose.pose.position.x;
-  prev_pose_.pose.position.y = odom_msg->pose.pose.position.y;
-  prev_pose_.pose.position.z = odom_msg->pose.pose.position.z;
-  prev_pose_.pose.orientation = odom_msg->pose.pose.orientation;
+  person_msg->velocity.z = smoothed_twist.angular.z;
 }
 
 }  // namespace mocap4r2_people
 
 #include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(mocap4r2_robot_gt::PeopleNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(mocap4r2_people::PeopleNode)

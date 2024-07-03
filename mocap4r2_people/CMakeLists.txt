@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.8)
 project(mocap4r2_people)
 
+set(CMAKE_CXX_STANDARD 20)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -13,7 +15,7 @@ find_package(mocap4r2_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
+find_package(people_msgs REQUIRED)
 
 set(dependencies
     rclcpp
@@ -22,7 +24,7 @@ set(dependencies
     tf2_ros
     geometry_msgs
     tf2_geometry_msgs
-    nav_msgs
+    people_msgs
 )
 
 include_directories(

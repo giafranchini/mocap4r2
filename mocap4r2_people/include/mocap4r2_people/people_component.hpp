@@ -22,12 +22,13 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <nav_msgs/msg/odometry.hpp>
 
 #include <vector>
 
 #include "mocap4r2_msgs/msg/rigid_bodies.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/pose_array.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 #include "people_msgs/msg/people.hpp"
 
 #include "rclcpp/rclcpp.hpp"
@@ -43,11 +44,16 @@ public:
 protected:
   void rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr msg);
   
-  geometry_msgs::msg::Pose get_pose_from_vector(const std::vector<double> & init_pos);
+  void fill_person_msg(
+    const std::string & person_name,
+    const geometry_msgs::msg::Pose & pose,
+    const std_msgs::msg::Header & header,
+    people_msgs::msg::Person::UniquePtr & person_msg);
 
-  void compute_odometry(
-    const tf2::Transform & root2robot_tf,
-    nav_msgs::msg::Odometry::UniquePtr & odom_msg);
+  void compute_velocity(
+    const geometry_msgs::msg::Pose & person_pose,
+    const std_msgs::msg::Header & header,
+    people_msgs::msg::Person::UniquePtr & person_msg);
 
   tf2::BufferCore tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
@@ -55,22 +61,22 @@ protected:
 
   rclcpp::Subscription<mocap4r2_msgs::msg::RigidBodies>::SharedPtr rigid_body_sub_;
   rclcpp::Publisher<people_msgs::msg::People>::SharedPtr people_pub_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr pose_array_pub_;
 
   std::string root_frame_;
   std::string people_frame_prefix_;
-  std::string mocap_frame_;
+  std::string map_frame_;
 
   std::string rigid_body_topic_;
   std::string rigid_body_prefix_;
   std::string people_topic_;
 
   tf2::Transform map2root_;
-  
 
   //map of poses to keep track of the previous poses of the people
   std::map<std::string, geometry_msgs::msg::PoseStamped> prev_poses_;
-
-  bool valid_root2map_{false};
+  double alpha_;
+  bool valid_map2root_{false};
 
   std::vector<double> pose_covariance_;
   std::vector<double> twist_covariance_;
