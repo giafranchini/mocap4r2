@@ -1,6 +1,6 @@
-mocap4r2_gt:
+mocap4r2_robot_localization:
   ros__parameters:
-    root_frame: 'world'
+    root_frame: 'mocap'
     map_frame: 'map'
     odom_frame: 'odom'
     robot_frame: 'base_link'
@@ -8,7 +8,7 @@ mocap4r2_gt:
     rigid_body_name: 'jackal_aligned.jackal_aligned'
     rigid_body_topic: '/rigid_bodies'
     odometry_topic: '/vicon/odom'
-    init_root2map_xyzrpy: [-2.2078, -1.791, 0.0, 0.0, 0.0, 0.0]
+    init_root2map_xyzrpy: [2.2078, 1.791, 0.0, 0.0, 0.0, 0.0] # for the covivio-v1 map
     covariance:
       pose: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
       twist: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]

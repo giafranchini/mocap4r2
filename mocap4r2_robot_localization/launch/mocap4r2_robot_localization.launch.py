@@ -26,8 +26,8 @@ def generate_launch_description():
 
   mocap4r2_robot_localization = Node(
     package=package_name,
-    executable='gt_program',
-    name='mocap4r2_gt',
+    executable='localization_program',
+    name='mocap4r2_robot_localization',
     output='screen',
     parameters=[os.path.join(get_package_share_directory(package_name), 'params', 'params.yaml')]
   )
