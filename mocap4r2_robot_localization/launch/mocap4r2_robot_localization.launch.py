@@ -16,14 +16,6 @@ def dump_params(path, name):
 
 def generate_launch_description():
 
-  gtbody2robot_tf = Node(
-    package='tf2_ros',
-    executable='static_transform_publisher',
-    name='gtbody2robot_tf',
-    output='screen',
-    arguments=["--x", "0", "--y", "0", "--z", "0.10", "--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1", "--frame-id", "base_link", "--child-frame-id", "base_mocap"]
-  )
-
   mocap4r2_robot_localization = Node(
     package=package_name,
     executable='localization_program',
@@ -32,4 +24,4 @@ def generate_launch_description():
     parameters=[os.path.join(get_package_share_directory(package_name), 'params', 'params.yaml')]
   )
 
-  return LaunchDescription([gtbody2robot_tf, mocap4r2_robot_localization])
+  return LaunchDescription([mocap4r2_robot_localization])

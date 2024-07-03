@@ -22,8 +22,8 @@ int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
 
-  auto gt_node = std::make_shared<mocap4r2_robot_localization::LocalizationNode>();
-  rclcpp::spin(gt_node);
+  auto localization_node = std::make_shared<mocap4r2_robot_localization::LocalizationNode>();
+  rclcpp::spin(localization_node);
 
   rclcpp::shutdown();
   return 0;
