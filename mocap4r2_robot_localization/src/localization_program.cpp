@@ -14,7 +14,7 @@
 
 #include <memory>
 
-#include "mocap4r2_robot_gt/set_gt_component.hpp"
+#include "mocap4r2_robot_localization/localization_component.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -22,19 +22,8 @@ int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
 
-  if (argc == 2 && strcmp(argv[1], "-h") == 0) {
-    std::cout << "Usage: " << std::endl;
-    std::cerr << "\tset_gt_cli\t# Set GT origin to curren pos" << std::endl;
-    std::cerr << "\tset_gt_cli x y z roll ptch yaw\t# Set GT origin to a pos" << std::endl;
-  } else {
-    auto set_gt_node = std::make_shared<mocap4r2_robot_gt::SetGTNode>();
-
-    std::vector<double> coords(argc - 1, 0.0);
-    for (int i = 0; i < argc - 1; i++) {
-      coords[i] = atof(argv[i + 1]);
-    }
-    set_gt_node->set_gt(coords);
-  }
+  auto gt_node = std::make_shared<mocap4r2_robot_localization::LocalizationNode>();
+  rclcpp::spin(gt_node);
 
   rclcpp::shutdown();
   return 0;

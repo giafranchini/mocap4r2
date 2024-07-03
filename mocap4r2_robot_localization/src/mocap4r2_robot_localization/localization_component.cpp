@@ -22,39 +22,44 @@
 
 #include <vector>
 
-#include "mocap4r2_robot_gt/gt_component.hpp"
+#include "mocap4r2_robot_localization/localization_component.hpp"
 #include "mocap4r2_msgs/msg/rigid_body.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 
-namespace mocap4r2_robot_gt
+namespace mocap4r2_robot_localization
 {
 
 using std::placeholders::_1;
 using std::placeholders::_2;
 
-GTNode::GTNode(const rclcpp::NodeOptions & options)
+LocalizationNode::LocalizationNode(const rclcpp::NodeOptions & options)
 : Node("mocap4r2_gt", options),
   tf_buffer_(),
   tf_listener_(tf_buffer_)
 {
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+  tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(*this);
 
-  declare_parameter<std::string>("root_frame", "odom");
+  declare_parameter<std::string>("root_frame", "world");
+  declare_parameter<std::string>("map_frame", "map");
+  declare_parameter<std::string>("odom_frame", "odom");
   declare_parameter<std::string>("robot_frame", "base_footprint");
   declare_parameter<std::string>("mocap_frame", "base_mocap");
-  declare_parameter<std::string>("rigid_body_topic_", "rigid_bodies");
+  declare_parameter<std::string>("rigid_body_topic", "rigid_bodies");
   declare_parameter<std::string>("odometry_topic", "odometry");
   declare_parameter<std::string>("rigid_body_name", "robot");
   declare_parameter<double>("alpha", 0.1);
-  declare_parameter<std::vector<double>>("init_mocap4r2_xyzrpy", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  declare_parameter<std::vector<double>>("init_root2map_xyzrpy", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
   declare_parameter<std::vector<double>>("covariance.pose", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
   declare_parameter<std::vector<double>>("covariance.twist", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
   
   get_parameter("root_frame", root_frame_);
+  get_parameter("map_frame", map_frame_);
+  get_parameter("odom_frame", odom_frame_);
   get_parameter("robot_frame", robot_frame_);
   get_parameter("mocap_frame", mocap_frame_);
-  get_parameter("rigid_body_topic_", rigid_body_topic_);
+  get_parameter("rigid_body_topic", rigid_body_topic_);
   get_parameter("rigid_body_name", rigid_body_name_);
   get_parameter("alpha", alpha_);
   get_parameter("odometry_topic", odometry_topic_);
@@ -62,32 +67,41 @@ GTNode::GTNode(const rclcpp::NodeOptions & options)
   get_parameter("covariance.twist", twist_covariance_);
 
   rigid_body_sub_ = create_subscription<mocap4r2_msgs::msg::RigidBodies>(
-    rigid_body_topic_, rclcpp::SensorDataQoS(), std::bind(&GTNode::rigid_bodies_callback, this, _1));
-  set_gt_origin_srv_ = create_service<mocap4r2_robot_gt_msgs::srv::SetGTOrigin>(
-    "~/set_get_origin", std::bind(&GTNode::set_gt_origin_callback, this, _1, _2));
-
+    rigid_body_topic_, rclcpp::SensorDataQoS(), std::bind(&LocalizationNode::rigid_bodies_callback, this, _1));
+ 
   odometry_pub_ = create_publisher<nav_msgs::msg::Odometry>(odometry_topic_, 10);
 
-  std::vector<double> init_mocap4r2_coordinates;
-  get_parameter("init_mocap4r2_xyzrpy", init_mocap4r2_coordinates);
+  std::vector<double> init_root2map_coordinates;
+  get_parameter("init_root2map_xyzrpy", init_root2map_coordinates);
 
-  if (init_mocap4r2_coordinates.size() == 6u) {
-    tf2::fromMsg(get_pose_from_vector(init_mocap4r2_coordinates), offset_);
+  if (init_root2map_coordinates.size() == 6u) {
+    tf2::fromMsg(get_pose_from_vector(init_root2map_coordinates), root2map_);
   } else {
     RCLCPP_ERROR(get_logger(), "Error in init_mocap xyzrpy coordinates - setting all values to 0");
-    tf2::fromMsg(get_pose_from_vector({0.0, 0.0, 0.0, 0.0, 0.0, 0.0}), offset_);
+    tf2::fromMsg(get_pose_from_vector({0.0, 0.0, 0.0, 0.0, 0.0, 0.0}), root2map_);
   }
+  // Send the static transform root to map
+  if(root_frame_ != map_frame_)
+  {
+    geometry_msgs::msg::TransformStamped root2map_msg;
+    root2map_msg.header.stamp = get_clock()->now();
+    root2map_msg.header.frame_id = root_frame_;
+    root2map_msg.child_frame_id = map_frame_;
+    root2map_msg.transform = tf2::toMsg(root2map_);
+    tf_static_broadcaster_->sendTransform(root2map_msg);
+  }
+  map2root_ = root2map_.inverse();
 }
 
 void
-GTNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr msg)
+LocalizationNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr msg)
 {
-  if (!valid_gtbody2robot_) {
+  if (!valid_mocap2robot_) { // Find mocap2robot (the mocap object to robot base_link)
     try {
-      auto gtbody2robot_msg = tf_buffer_.lookupTransform(
+      auto mocap2robot_msg = tf_buffer_.lookupTransform(
         mocap_frame_, robot_frame_, tf2::TimePointZero);
-      tf2::fromMsg(gtbody2robot_msg.transform, gtbody2robot_);
-      valid_gtbody2robot_ = true;
+      tf2::fromMsg(mocap2robot_msg.transform, mocap2robot_);
+      valid_mocap2robot_ = true;
     } catch (const tf2::TransformException & e) {
       RCLCPP_WARN(
         get_logger(), "Transform %s->%s exception: [%s]",
@@ -113,67 +127,45 @@ GTNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr m
       RCLCPP_WARN(get_logger(), "Zero quaternion received from mocap system. Check that the robot is being tracked");
       return;
     }
-    mocap2gtbody_.setOrigin(tf2::Vector3(robot_it->pose.position.x, robot_it->pose.position.y, robot_it->pose.position.z));
-    mocap2gtbody_.setRotation(q);
+    root2mocap_.setOrigin(tf2::Vector3(robot_it->pose.position.x, robot_it->pose.position.y, robot_it->pose.position.z));
+    root2mocap_.setRotation(q);
 
-    tf2::Transform root2robotgt;
-    root2robotgt = offset_ * mocap2gtbody_ * gtbody2robot_;
+    tf2::Transform map2odom, map2robot;
+    tf2::Transform mocap2odom;
+    try {
+      auto mocap2odom_msg = tf_buffer_.lookupTransform(
+        mocap_frame_, odom_frame_, tf2::TimePointZero);
+      tf2::fromMsg(mocap2odom_msg.transform, mocap2odom);
+    } catch (const tf2::TransformException & e) {
+      RCLCPP_WARN(
+        get_logger(), "Transform %s->%s exception: [%s]",
+        mocap_frame_.c_str(), odom_frame_.c_str(), e.what());
+      return;
+    }
+
+    map2odom = map2root_ * root2mocap_ * mocap2odom;
+    map2robot = map2root_ * root2mocap_ * mocap2robot_; 
 
     auto odom_msg = std::make_unique<nav_msgs::msg::Odometry>();
-    odom_msg->header.frame_id = root_frame_;
+    odom_msg->header.frame_id = map_frame_;
     odom_msg->header.stamp = msg->header.stamp;
-    odom_msg->child_frame_id = robot_frame_ + "_gt";
-    GTNode::compute_odometry(root2robotgt, odom_msg);
+    odom_msg->child_frame_id = robot_frame_;
+    LocalizationNode::compute_odometry(map2robot, odom_msg);
 
-    geometry_msgs::msg::TransformStamped root2robotgt_msg;
-    root2robotgt_msg.header.frame_id = root_frame_;
-    root2robotgt_msg.header.stamp = msg->header.stamp;
-    root2robotgt_msg.child_frame_id = robot_frame_ + "_gt";
-    root2robotgt_msg.transform = tf2::toMsg(root2robotgt);
+    geometry_msgs::msg::TransformStamped map2odom_msg;
+    map2odom_msg.header.frame_id = map_frame_;
+    map2odom_msg.header.stamp = msg->header.stamp;
+    map2odom_msg.child_frame_id = odom_frame_;
+    map2odom_msg.transform = tf2::toMsg(map2odom);
 
     odometry_pub_->publish(std::move(odom_msg));
-    tf_broadcaster_->sendTransform(root2robotgt_msg);
+    tf_broadcaster_->sendTransform(map2odom_msg);
   }
-}
-
-void
-GTNode::set_gt_origin_callback(
-  const std::shared_ptr<mocap4r2_robot_gt_msgs::srv::SetGTOrigin::Request> req,
-  std::shared_ptr<mocap4r2_robot_gt_msgs::srv::SetGTOrigin::Response> resp)
-{
-  if (!valid_gtbody2robot_) {
-    resp->success = false;
-    resp->error_msg = "Pose still not valid setting origin";
-    RCLCPP_ERROR(get_logger(), "%s", resp->error_msg.c_str());
-    return;
-  }
-
-  tf2::Transform wish_gt;
-  if (req->current_is_origin) {
-    wish_gt.setOrigin({0.0, 0.0, 0.0});
-    wish_gt.setRotation({0.0, 0.0, 0.0, 1.0});
-  } else {
-    wish_gt.setOrigin(
-      tf2::Vector3(
-        req->origin_pose.position.x, req->origin_pose.position.y, req->origin_pose.position.z));
-    wish_gt.setRotation(
-      tf2::Quaternion(
-        req->origin_pose.orientation.x, req->origin_pose.orientation.y,
-        req->origin_pose.orientation.z,
-        req->origin_pose.orientation.w));
-  }
-
-  tf2::Transform root2robotgt;
-  root2robotgt = mocap2gtbody_ * gtbody2robot_;
-
-  offset_ = root2robotgt.inverse() * wish_gt;
-
-  resp->success = true;
 }
 
 
 geometry_msgs::msg::Pose
-GTNode::get_pose_from_vector(const std::vector<double> & init_pos)
+LocalizationNode::get_pose_from_vector(const std::vector<double> & init_pos)
 {
   geometry_msgs::msg::Pose ret;
 
@@ -196,7 +188,7 @@ GTNode::get_pose_from_vector(const std::vector<double> & init_pos)
   }
 }
 
-void GTNode::compute_odometry(
+void LocalizationNode::compute_odometry(
   const tf2::Transform & root2robot_tf,
   nav_msgs::msg::Odometry::UniquePtr & odom_msg)
 {
@@ -261,7 +253,7 @@ void GTNode::compute_odometry(
   prev_pose_.pose.orientation = odom_msg->pose.pose.orientation;
 }
 
-}  // namespace mocap4r2_robot_gt
+}  // namespace mocap4r2_robot_localization
 
 #include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(mocap4r2_robot_gt::GTNode)
+RCLCPP_COMPONENTS_REGISTER_NODE(mocap4r2_robot_localization::LocalizationNode)

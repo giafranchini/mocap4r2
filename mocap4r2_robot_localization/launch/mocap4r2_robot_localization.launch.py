@@ -4,7 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 
-package_name = "mocap4r2_robot_gt"
+package_name = "mocap4r2_robot_localization"
 
 '''
 Used to load parameters for composable nodes
@@ -24,12 +24,12 @@ def generate_launch_description():
     arguments=["--x", "0", "--y", "0", "--z", "0.10", "--qx", "0", "--qy", "0", "--qz", "0", "--qw", "1", "--frame-id", "base_link", "--child-frame-id", "base_mocap"]
   )
 
-  mocap4r2_robot_gt = Node(
-    package='mocap4r2_robot_gt',
+  mocap4r2_robot_localization = Node(
+    package=package_name,
     executable='gt_program',
     name='mocap4r2_gt',
     output='screen',
     parameters=[os.path.join(get_package_share_directory(package_name), 'params', 'params.yaml')]
   )
 
-  return LaunchDescription([gtbody2robot_tf, mocap4r2_robot_gt])
+  return LaunchDescription([gtbody2robot_tf, mocap4r2_robot_localization])
