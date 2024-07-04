@@ -46,12 +46,14 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
   declare_parameter<std::string>("rigid_body_topic", "rigid_bodies");
   declare_parameter<std::string>("people_topic", "people");
   declare_parameter<std::string>("rigid_body_prefix", "person");
+  declare_parameter<double>("alpha", 0.1);
 
   get_parameter("root_frame", root_frame_);
   get_parameter("map_frame", map_frame_);
   get_parameter("rigid_body_topic", rigid_body_topic_);
   get_parameter("rigid_body_prefix", rigid_body_prefix_);
   get_parameter("people_topic", people_topic_);
+  get_parameter("alpha", alpha_);
 
 
   rigid_body_sub_ = create_subscription<mocap4r2_msgs::msg::RigidBodies>(
@@ -170,9 +172,13 @@ void PeopleNode::compute_velocity(
   tf2::Transform p1, p2;
   // try to get the previous pose of the person from the map of poses
   // if it is not found, return
+  rclcpp::Time t1;
+  rclcpp::Time t2 = header.stamp;
+
   try {
     tf2::fromMsg(prev_poses_[person_msg->name].pose, p1);
     // update the previous pose of the person
+    t1 = prev_poses_[person_msg->name].header.stamp;
     prev_poses_[person_msg->name].pose = person_pose;
     prev_poses_[person_msg->name].header = header;
   } catch (const std::out_of_range & e) {
@@ -194,9 +200,6 @@ void PeopleNode::compute_velocity(
   const double q2_x = p2.getRotation().x();
   const double q2_y = p2.getRotation().y();
   const double q2_z = p2.getRotation().z();
-
-  rclcpp::Time t1 = prev_poses_[person_msg->name].header.stamp;
-  rclcpp::Time t2 = header.stamp;
 
   const double dt_inv = 1.0 / (t2 - t1).seconds();
 

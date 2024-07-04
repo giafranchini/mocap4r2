@@ -5,3 +5,4 @@ mocap4r2_people:
     rigid_body_prefix: 'wand'
     rigid_body_topic: '/rigid_bodies'
     people_topic: '/vicon/people'
+    alpha: 0.1
