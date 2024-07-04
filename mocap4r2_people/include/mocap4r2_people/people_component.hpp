@@ -43,7 +43,7 @@ public:
 
 protected:
   void rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedPtr msg);
-  
+
   void fill_person_msg(
     const std::string & person_name,
     const geometry_msgs::msg::Pose & pose,
@@ -64,7 +64,6 @@ protected:
   rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr pose_array_pub_;
 
   std::string root_frame_;
-  std::string people_frame_prefix_;
   std::string map_frame_;
 
   std::string rigid_body_topic_;
@@ -78,8 +77,6 @@ protected:
   double alpha_;
   bool valid_map2root_{false};
 
-  std::vector<double> pose_covariance_;
-  std::vector<double> twist_covariance_;
 };
 
 }  // namespace mocap4r2_people

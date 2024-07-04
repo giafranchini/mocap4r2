@@ -19,7 +19,7 @@ def generate_launch_description():
   mocap4r2_people = Node(
     package=package_name,
     executable='people_program',
-    name='moca4r2_people',
+    name='mocap4r2_people',
     output='screen',
     parameters=[os.path.join(get_package_share_directory(package_name), 'params', 'params.yaml')]
   )

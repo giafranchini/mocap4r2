@@ -43,29 +43,24 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
 
   declare_parameter<std::string>("root_frame", "mocap");
   declare_parameter<std::string>("map_frame", "map");
-  declare_parameter<std::string>("people_frame_prefix", "person");
   declare_parameter<std::string>("rigid_body_topic", "rigid_bodies");
   declare_parameter<std::string>("people_topic", "people");
   declare_parameter<std::string>("rigid_body_prefix", "person");
-  declare_parameter<std::vector<double>>("covariance.pose", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
-  declare_parameter<std::vector<double>>("covariance.twist", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
-  
+
   get_parameter("root_frame", root_frame_);
   get_parameter("map_frame", map_frame_);
-  get_parameter("people_frame_prefix", people_frame_prefix_);
   get_parameter("rigid_body_topic", rigid_body_topic_);
   get_parameter("rigid_body_prefix", rigid_body_prefix_);
   get_parameter("people_topic", people_topic_);
-  get_parameter("covariance.pose", pose_covariance_);
-  get_parameter("covariance.twist", twist_covariance_);
 
 
   rigid_body_sub_ = create_subscription<mocap4r2_msgs::msg::RigidBodies>(
-    rigid_body_topic_, rclcpp::SensorDataQoS(), std::bind(&PeopleNode::rigid_bodies_callback, this, _1));
-  
+    rigid_body_topic_, rclcpp::SensorDataQoS(),
+    std::bind(&PeopleNode::rigid_bodies_callback, this, _1));
+
   people_pub_ = create_publisher<people_msgs::msg::People>(people_topic_, 10);
   pose_array_pub_ = create_publisher<geometry_msgs::msg::PoseArray>("pose_array", 10);
-  valid_map2root_ = map_frame_ == root_frame_; 
+  valid_map2root_ = map_frame_ == root_frame_;
 }
 
 void
@@ -84,29 +79,35 @@ PeopleNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedP
     }
   } else {
     // filter out the non valid elements
-    auto people = std::ranges::filter_view(msg->rigidbodies, [this](const mocap4r2_msgs::msg::RigidBody & rb) {
+    auto people = std::ranges::filter_view(
+      msg->rigidbodies, [this](const mocap4r2_msgs::msg::RigidBody & rb) {
         return rb.rigid_body_name.find(rigid_body_prefix_) != std::string::npos;
       });
 
-    if(people.empty()) {
+    if (people.empty()) {
       RCLCPP_WARN(get_logger(), "No people found in mocap system");
       return;
     }
-    
+
     auto people_msg = std::make_unique<people_msgs::msg::People>();
     auto pose_array_msg = std::make_unique<geometry_msgs::msg::PoseArray>();
-    
-    for(const auto & person : people) {
+
+    for (const auto & person : people) {
       // Check if the mocap is publishing the person pose and is not zero
       tf2::Quaternion q;
       tf2::fromMsg(person.pose.orientation, q);
       if (q.length2() < 1e-6) {
-        RCLCPP_WARN(get_logger(), "Zero quaternion received from mocap system. Check that the person is being tracked");
+        RCLCPP_WARN(
+          get_logger(),
+          "Zero quaternion received from mocap system. Check that the person is being tracked");
         continue;
       }
       // obtain the root2person transform
       tf2::Transform root2person;
-      root2person.setOrigin(tf2::Vector3(person.pose.position.x, person.pose.position.y, person.pose.position.z));
+      root2person.setOrigin(
+        tf2::Vector3(
+          person.pose.position.x, person.pose.position.y,
+          person.pose.position.z));
       root2person.setRotation(q);
 
       // obtain the map2person transform
@@ -192,8 +193,8 @@ void PeopleNode::compute_velocity(
   const double q2_w = p2.getRotation().w();
   const double q2_x = p2.getRotation().x();
   const double q2_y = p2.getRotation().y();
-  const double q2_z = p2.getRotation().z(); 
-  
+  const double q2_z = p2.getRotation().z();
+
   rclcpp::Time t1 = prev_poses_[person_msg->name].header.stamp;
   rclcpp::Time t2 = header.stamp;
 
@@ -201,13 +202,15 @@ void PeopleNode::compute_velocity(
 
   auto delta_trans = tf2::quatRotate(
     p2.getRotation().inverse(), (p2.getOrigin() - p1.getOrigin()));
-    
+
   // Compute linear velocities
-  
+
   // Smooth velocities with a simple low-pass filter
-  smoothed_twist.linear.x = (1 - alpha_) * smoothed_twist.linear.x + alpha_ * (delta_trans.x() * dt_inv);
-  smoothed_twist.linear.y = (1 - alpha_) * smoothed_twist.linear.y + alpha_ * (delta_trans.y() * dt_inv);
-  
+  smoothed_twist.linear.x = (1 - alpha_) * smoothed_twist.linear.x + alpha_ *
+    (delta_trans.x() * dt_inv);
+  smoothed_twist.linear.y = (1 - alpha_) * smoothed_twist.linear.y + alpha_ *
+    (delta_trans.y() * dt_inv);
+
   person_msg->velocity.x = smoothed_twist.linear.x;
   person_msg->velocity.y = smoothed_twist.linear.y;
 
