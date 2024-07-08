@@ -203,8 +203,7 @@ void PeopleNode::compute_velocity(
 
   const double dt_inv = 1.0 / (t2 - t1).seconds();
 
-  auto delta_trans = tf2::quatRotate(
-    p2.getRotation().inverse(), (p2.getOrigin() - p1.getOrigin()));
+  auto delta_trans = p2.getOrigin() - p1.getOrigin();
 
   // Compute linear velocities
 
