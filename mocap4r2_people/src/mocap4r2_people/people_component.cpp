@@ -46,7 +46,18 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
   declare_parameter<std::string>("rigid_body_topic", "rigid_bodies");
   declare_parameter<std::string>("people_topic", "people");
   declare_parameter<std::string>("rigid_body_prefix", "person");
+  declare_parameter<int>("tag.id", 0);
+  declare_parameter<int>("tag.group_id", -1);
+  declare_parameter<int>("tag.behaviour", 2);
   declare_parameter<double>("alpha", 0.1);
+
+  int id, group_id, behaviour;
+  get_parameter("tag.id", id);
+  get_parameter("tag.group_id", group_id);
+  get_parameter("tag.behaviour", behaviour);
+  tags_["id"] = std::to_string(id);
+  tags_["group_id"] = std::to_string(group_id);
+  tags_["behaviour"] = std::to_string(behaviour);
 
   get_parameter("root_frame", root_frame_);
   get_parameter("map_frame", map_frame_);
@@ -161,6 +172,24 @@ void PeopleNode::fill_person_msg(
 
   // fill the velocity: vx, vy, vtheta
   compute_velocity(pose, header, person_msg);
+
+  // fill the tags
+  for (const auto & tag : tags_) {
+    person_msg->tagnames.push_back(tag.first);
+    if (tag.first == "id") {
+      std::string s = person_name;
+      std::string delimiter = "_";
+      size_t pos = 0;
+      std::string token;
+      while ((pos = s.find(delimiter)) != std::string::npos) {
+        token = s.substr(0, pos);
+        s.erase(0, pos + delimiter.length());
+      }
+      person_msg->tags.push_back(s);
+      continue;
+    }
+    person_msg->tags.push_back(tag.second);
+  }
 }
 
 void PeopleNode::compute_velocity(

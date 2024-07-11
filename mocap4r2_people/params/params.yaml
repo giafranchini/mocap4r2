@@ -2,7 +2,11 @@ mocap4r2_people:
   ros__parameters:
     root_frame: 'mocap'
     map_frame: 'map'
-    rigid_body_prefix: 'wand'
+    rigid_body_prefix: 'U_'
     rigid_body_topic: '/rigid_bodies'
     people_topic: '/vicon/people'
     alpha: 0.1
+    tag:
+      id: 0
+      group_id: -1
+      behavior: 2

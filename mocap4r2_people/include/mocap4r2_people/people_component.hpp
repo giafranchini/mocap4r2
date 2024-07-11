@@ -70,6 +70,8 @@ protected:
   std::string rigid_body_prefix_;
   std::string people_topic_;
 
+  std::map<std::string, std::string> tags_;
+
   tf2::Transform map2root_;
 
   //map of poses to keep track of the previous poses of the people
