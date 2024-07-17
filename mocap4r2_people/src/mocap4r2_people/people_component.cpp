@@ -40,6 +40,7 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
   tf_listener_(tf_buffer_)
 {
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+  tf_static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(*this);
 
   declare_parameter<std::string>("root_frame", "mocap");
   declare_parameter<std::string>("map_frame", "map");
@@ -50,6 +51,9 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
   declare_parameter<int>("tag.group_id", -1);
   declare_parameter<int>("tag.behaviour", 2);
   declare_parameter<double>("alpha", 0.1);
+  declare_parameter<bool>("publish_map", true);
+  declare_parameter<std::vector<double>>("init_root2map_xyzrpy", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  
 
   int id, group_id, behaviour;
   get_parameter("tag.id", id);
@@ -65,7 +69,27 @@ PeopleNode::PeopleNode(const rclcpp::NodeOptions & options)
   get_parameter("rigid_body_prefix", rigid_body_prefix_);
   get_parameter("people_topic", people_topic_);
   get_parameter("alpha", alpha_);
+  get_parameter("publish_map", publish_map_);
+  std::vector<double> init_root2map_coordinates;
+  get_parameter("init_root2map_xyzrpy", init_root2map_coordinates);
 
+  if(publish_map_)
+  {
+    if (init_root2map_coordinates.size() == 6u) {
+    tf2::fromMsg(get_pose_from_vector(init_root2map_coordinates), root2map_);
+    } else {
+      RCLCPP_ERROR(get_logger(), "Error in init_mocap xyzrpy coordinates - setting all values to 0");
+      tf2::fromMsg(get_pose_from_vector({0.0, 0.0, 0.0, 0.0, 0.0, 0.0}), root2map_);
+    }
+    // Send the static transform root to map
+    if(root_frame_ != map_frame_)
+    {
+      root2map_msg_.header.stamp = get_clock()->now();
+      root2map_msg_.header.frame_id = root_frame_;
+      root2map_msg_.child_frame_id = map_frame_;
+      root2map_msg_.transform = tf2::toMsg(root2map_);
+    }
+  }
 
   rigid_body_sub_ = create_subscription<mocap4r2_msgs::msg::RigidBodies>(
     rigid_body_topic_, rclcpp::SensorDataQoS(),
@@ -86,6 +110,10 @@ PeopleNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedP
       tf2::fromMsg(map2root_msg.transform, map2root_);
       valid_map2root_ = true;
     } catch (const tf2::TransformException & e) {
+      if(publish_map_){
+        tf_static_broadcaster_->sendTransform(root2map_msg_);
+        valid_map2root_ = true;
+      }
       RCLCPP_WARN(
         get_logger(), "Transform %s->%s exception: [%s]",
         root_frame_.c_str(), map_frame_.c_str(), e.what());

@@ -58,6 +58,7 @@ protected:
   tf2::BufferCore tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
 
   rclcpp::Subscription<mocap4r2_msgs::msg::RigidBodies>::SharedPtr rigid_body_sub_;
   rclcpp::Publisher<people_msgs::msg::People>::SharedPtr people_pub_;
@@ -73,11 +74,12 @@ protected:
   std::map<std::string, std::string> tags_;
 
   tf2::Transform map2root_;
+  geometry_msgs::msg::TransformStamped root2map_msg_;
 
   //map of poses to keep track of the previous poses of the people
   std::map<std::string, geometry_msgs::msg::PoseStamped> prev_poses_;
   double alpha_;
-  bool valid_map2root_{false};
+  bool valid_map2root_{false}, publish_map_{true};
 
 };
 
