@@ -16,7 +16,6 @@
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
-#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
 
@@ -112,6 +111,7 @@ PeopleNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedP
     } catch (const tf2::TransformException & e) {
       if(publish_map_){
         tf_static_broadcaster_->sendTransform(root2map_msg_);
+        map2root_ = root2map_.inverse();
         valid_map2root_ = true;
       }
       RCLCPP_WARN(
@@ -144,6 +144,7 @@ PeopleNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedP
         continue;
       }
       // obtain the root2person transform
+
       tf2::Transform root2person;
       root2person.setOrigin(
         tf2::Vector3(
@@ -151,12 +152,19 @@ PeopleNode::rigid_bodies_callback(const mocap4r2_msgs::msg::RigidBodies::SharedP
           person.pose.position.z));
       root2person.setRotation(q);
 
+      RCLCPP_DEBUG(
+          get_logger(),
+          "pose of the person in vicon frame %s \n x: %f \ty: %f \ttheta: %f", person.rigid_body_name.c_str(), 
+          person.pose.position.x, person.pose.position.y,
+          person.pose.position.z);
+
       // obtain the map2person transform
       tf2::Transform map2person = map2root_ * root2person;
 
       //consider markers instead of pose_array
       auto person_pose = std::make_unique<geometry_msgs::msg::Pose>();
       tf2::toMsg(map2person, *person_pose);
+
       geometry_msgs::msg::TransformStamped person_pose_msg;
       person_pose_msg.header = msg->header;
       person_pose_msg.header.frame_id = map_frame_;
@@ -280,6 +288,30 @@ void PeopleNode::compute_velocity(
     2.0 * dt_inv * (q1_w * q2_z - q1_x * q2_y + q1_y * q2_x - q1_z * q2_w));
 
   person_msg->velocity.z = smoothed_twist.angular.z;
+}
+
+geometry_msgs::msg::Pose
+PeopleNode::get_pose_from_vector(const std::vector<double> & init_pos)
+{
+  geometry_msgs::msg::Pose ret;
+
+  if (init_pos.size() == 6u) {
+    tf2::Quaternion q;
+    q.setEuler(init_pos[3], init_pos[4], init_pos[5]);
+
+    ret.position.x = init_pos[0];
+    ret.position.y = init_pos[1];
+    ret.position.z = init_pos[2];
+    ret.orientation.x = q.x();
+    ret.orientation.y = q.y();
+    ret.orientation.z = q.z();
+    ret.orientation.w = q.w();
+
+    return ret;
+  } else {
+    RCLCPP_WARN(get_logger(), "Trying to get Pose for a wrong vector");
+    return ret;
+  }
 }
 
 }  // namespace mocap4r2_people

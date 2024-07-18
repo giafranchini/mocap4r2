@@ -21,6 +21,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <vector>
@@ -55,6 +56,9 @@ protected:
     const std_msgs::msg::Header & header,
     people_msgs::msg::Person::UniquePtr & person_msg);
 
+  geometry_msgs::msg::Pose get_pose_from_vector(
+    const std::vector<double> & init_pos);
+
   tf2::BufferCore tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
@@ -73,7 +77,7 @@ protected:
 
   std::map<std::string, std::string> tags_;
 
-  tf2::Transform map2root_;
+  tf2::Transform map2root_, root2map_;
   geometry_msgs::msg::TransformStamped root2map_msg_;
 
   //map of poses to keep track of the previous poses of the people
