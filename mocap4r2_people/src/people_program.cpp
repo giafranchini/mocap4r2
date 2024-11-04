@@ -14,7 +14,7 @@
 
 #include <memory>
 
-#include "mocap4r2_robot_localization/localization_component.hpp"
+#include "mocap4r2_people/people_component.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -22,8 +22,8 @@ int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
 
-  auto localization_node = std::make_shared<mocap4r2_robot_localization::LocalizationNode>();
-  rclcpp::spin(localization_node);
+  auto people_node = std::make_shared<mocap4r2_people::PeopleNode>();
+  rclcpp::spin(people_node);
 
   rclcpp::shutdown();
   return 0;

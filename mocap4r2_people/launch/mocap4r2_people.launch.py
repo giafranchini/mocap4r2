@@ -4,7 +4,7 @@ from ament_index_python.packages import get_package_share_directory
 import os
 import yaml
 
-package_name = "mocap4r2_robot_localization"
+package_name = "mocap4r2_people"
 
 '''
 Used to load parameters for composable nodes
@@ -16,12 +16,12 @@ def dump_params(path, name):
 
 def generate_launch_description():
 
-  mocap4r2_robot_localization = Node(
+  mocap4r2_people = Node(
     package=package_name,
-    executable='localization_program',
-    name='mocap4r2_robot_localization',
+    executable='people_program',
+    name='mocap4r2_people',
     output='screen',
     parameters=[os.path.join(get_package_share_directory(package_name), 'params', 'params.yaml')]
   )
 
-  return LaunchDescription([mocap4r2_robot_localization])
+  return LaunchDescription([mocap4r2_people])
